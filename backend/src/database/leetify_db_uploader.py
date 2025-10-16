@@ -1,16 +1,11 @@
 import psycopg2
 from psycopg2.extras import execute_values
-from database.db import get_connection
+from src.database.db import get_connection
 
 def insert_match_and_players(conn, match_data):
-    """
-    Inserts a match and all player stats into the database.
-    match_data: result from merge_table_and_api_data()
-    """
-
     with conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO matches (match_id, data_source, hltv_match_id, team_scores, winner_team, date)
+            INSERT INTO matches (match_id, data_source, hltv_match_id, team_scores, winner_team, date_finished_at)
             VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (match_id) DO NOTHING
         """, (
@@ -28,7 +23,7 @@ def insert_match_and_players(conn, match_data):
                 VALUES (%s, %s, %s)
                 ON CONFLICT (steam64_id) DO NOTHING
             """, (
-                p.get("steam64Id"),
+                p.get("steam64_id"),
                 p.get("name"),
                 p.get("leetifyUserId")
             ))
@@ -37,7 +32,7 @@ def insert_match_and_players(conn, match_data):
         for p in match_data["player_stats"]:
             values.append((
                 match_data["match_id"],
-                p.get("steam64Id"),
+                p.get("steam64_id"),
                 p.get("team"),
                 p.get("won"),
                 p.get("preaim"),

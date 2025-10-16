@@ -1,4 +1,4 @@
-from db import get_connection
+from src.database.db import get_connection
 
 schema_sql = """
 CREATE TABLE IF NOT EXISTS matches (
@@ -6,8 +6,8 @@ CREATE TABLE IF NOT EXISTS matches (
     data_source VARCHAR(64),
     hltv_match_id VARCHAR(64),
     team_scores INTEGER[],
-    winner_team INTEGER,  -- 0 or 1
-    date TIMESTAMP DEFAULT NOW()
+    winner_team INTEGER,
+    date_finished_at TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS players (
