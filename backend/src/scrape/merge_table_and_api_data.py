@@ -3,7 +3,7 @@ def merge_table_and_api_data(api_parsed, table_data):
     teams = table_data["teams"]
 
     team_scores = api_parsed.get("team_scores", [0, 0])
-    winning_team = 0 if team_scores[0] > team_scores[1] else 1
+    winning_team = 0 
     if api_parsed.get("team_scores") == [0, 0]:
         print("⚠️ Warning: team_scores are both 0 for match_id", api_parsed.get("match_id"))
 

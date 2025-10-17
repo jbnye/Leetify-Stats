@@ -1,56 +1,62 @@
 import sys
 import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import time
 import requests
+from fake_useragent import UserAgent
 from playwright.sync_api import sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from scrape.table_scraper import parse_table
 from scrape.leetify_match_data_parser import leetify_match_data_parser
 from scrape.merge_table_and_api_data import merge_table_and_api_data
 from database.db import get_connection
+from database.get_db_matches import get_all_matches_ids
 from database.leetify_db_uploader import insert_match_and_players
+from database.get_db_faceit_steam_ids import get_steam_ids
 
-# URL = "https://leetify.com/app/match-details/7168d44e-ed88-45ad-9403-28187440b98e/overview"
-# requestURL = "https://api.cs-prod.leetify.com/api/games/7168d44e-ed88-45ad-9403-28187440b98e"
-profileURL = "https://api.cs-prod.leetify.com/api/profile/id/76561198089612542"
-URL = "https://leetify.com/app/match-details/ed7d411b-876d-4481-b45d-a44f826426e5/overview"
-requestURL = "https://api.cs-prod.leetify.com/api/games/ed7d411b-876d-4481-b45d-a44f826426e5"
+# URL = "https://leetify.com/app/match-details/7168d44e-ed88-45ad-9403-28187440b98e/overview" # requestURL = "https://api.cs-prod.leetify.com/api/games/7168d44e-ed88-45ad-9403-28187440b98e" # profileURL = "https://api.cs-prod.leetify.com/api/profile/id/76561198089612542" # URL = "https://leetify.com/app/match-details/ed7d411b-876d-4481-b45d-a44f826426e5/overview" # requestURL = "https://api.cs-prod.leetify.com/api/games/ed7d411b-876d-4481-b45d-a44f826426e5"
 
 
-def scrape_match_with_retry(page, match_id, headers, retries=3, delay=5):
-    """Scrape a single match with up to `retries` attempts."""
-    URL = f"https://leetify.com/app/match-details/{match_id}/overview"
-    requestURL = f"https://api.cs-prod.leetify.com/api/games/{match_id}"
+ua = UserAgent()
 
+def get_random_headers():
+    return {
+        "User-Agent": ua.random,
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "keep-alive"
+    }
+
+
+def scrape_match_with_retry(page, match_id, retries=3, delay=5):
+    """Scrape a single match with retry and random User-Agent rotation."""
     for attempt in range(1, retries + 1):
-        try:
-            print(f"\n[Attempt {attempt}] Fetching match {match_id}")
-            page.goto(URL, timeout=20000)
-            page.wait_for_load_state("networkidle", timeout=30000)
+        headers = get_random_headers()
+        URL = f"https://leetify.com/app/match-details/{match_id}/overview"
+        requestURL = f"https://api.cs-prod.leetify.com/api/games/{match_id}"
 
-            title = page.title()
-            print("Page Title:", title)
+        try:
+            print(f"\n[Attempt {attempt}] Fetching match {match_id} with UA: {headers['User-Agent']}")
+            page.set_extra_http_headers(headers)
+            page.goto(URL, timeout=60000)
+            page.wait_for_load_state("networkidle", timeout=60000)
 
             table = page.locator("table.--use-min-width")
-            table.wait_for(state="visible", timeout=15000)
+            table.wait_for(state="visible", timeout=60000)
 
             rows = table.locator("tbody tr")
             raw_table = []
-            row_count = rows.count()
-            for i in range(row_count):
-                row = rows.nth(i)
-                cells = row.locator("td")
-                cell_count = cells.count()
-                row_data = [cells.nth(j).inner_text() for j in range(cell_count)]
+            for i in range(rows.count()):
+                cells = rows.nth(i).locator("td")
+                row_data = [cells.nth(j).inner_text() for j in range(cells.count())]
                 raw_table.append(row_data)
-
 
             teams, players = parse_table(raw_table)
             table_data = {"teams": teams, "players": players}
 
-
-            response = requests.get(requestURL, headers=headers)
+            response = requests.get(requestURL, headers=headers, timeout=15)
             if response.status_code != 200:
                 print(f"Failed to fetch match API ({response.status_code}), skipping.")
                 return None
@@ -61,11 +67,13 @@ def scrape_match_with_retry(page, match_id, headers, retries=3, delay=5):
 
         except PlaywrightTimeoutError:
             print(f"Timeout while scraping match {match_id} (attempt {attempt}/{retries})")
+        except requests.exceptions.Timeout:
+            print(f"Request timeout for match {match_id} (attempt {attempt}/{retries})")
         except Exception as e:
             print(f"Unexpected error scraping match {match_id}: {e}")
 
         if attempt < retries:
-            print(f"Retrying in {delay}s...")
+            print(f"Rotating User-Agent and retrying in {delay}s...")
             time.sleep(delay)
 
     print(f"Failed to scrape {match_id} after {retries} retries.")
@@ -73,53 +81,62 @@ def scrape_match_with_retry(page, match_id, headers, retries=3, delay=5):
 
 
 def main(headless=True):
-    headers = {"Accept": "application/json"}
-    count = 0
+    faceit_steam_ids = get_steam_ids()
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    response = requests.get(profileURL, headers=headers)
-    if response.status_code != 200:
-        print("Failed to fetch profile API:", response.status_code, response.text)
-        return
+    for index, steam_id in enumerate(faceit_steam_ids):
+        database_match_ids = get_all_matches_ids()
+        count = 0
+        headers = get_random_headers()
 
-    profile_data = response.json()
-    faceit_matches = [
-        g for g in profile_data.get("games", [])
-        if g.get("dataSource") == "faceit"
-    ][:50]
+        profileURL = f"https://api.cs-prod.leetify.com/api/profile/id/{steam_id}"
+        response = requests.get(profileURL, headers=headers, timeout=15)
+        if response.status_code != 200:
+            print("Failed to fetch profile API for:", response.status_code, steam_id)
+            continue
 
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=headless)
-        context = browser.new_context()
-        page = context.new_page()
+        profile_data = response.json()
+        faceit_matches = [
+            g for g in profile_data.get("games", [])
+            if g.get("dataSource") == "faceit"
+        ][:50]
 
-        for match in faceit_matches:
-            match_id = match["gameId"]
+        with sync_playwright() as pw:
+            random_ua = ua.random
+            browser = pw.chromium.launch(headless=headless)
+            context = browser.new_context(user_agent=random_ua)
+            page = context.new_page()
 
-            merged_data = scrape_match_with_retry(page, match_id, headers)
+            for match in faceit_matches:
+                match_id = match["gameId"]
+                if match_id in database_match_ids:
+                    print(f"Skipping already-uploaded match {match_id}")
+                    continue
 
-            if not merged_data:
-                print(f"Skipping match {match_id} after all retries.")
-                continue
+                merged_data = scrape_match_with_retry(page, match_id)
+                if not merged_data:
+                    print(f"Skipping match {match_id} after all retries.")
+                    continue
 
-            conn = get_connection()
-            match_payload = {
-                "match_id": merged_data["match_id"],
-                "dataSource": merged_data.get("dataSource"),
-                "hltvMatchId": merged_data.get("hltvMatchId"),
-                "team_scores": merged_data.get("team_scores"),
-                "winner_team": 0 if merged_data.get("team_scores", [0,0])[0] > merged_data.get("team_scores", [0,0])[1] else 1,
-                "date_finished_at": merged_data.get("date_finished_at"),
-                "player_stats": merged_data["player_stats"]
-            }
-            insert_match_and_players(conn, match_payload)
-            conn.close()
+                match_payload = {
+                    "match_id": merged_data["match_id"],
+                    "dataSource": merged_data.get("dataSource"),
+                    "hltvMatchId": merged_data.get("hltvMatchId"),
+                    "team_scores": merged_data.get("team_scores"),
+                    "winner_team": 0 if merged_data.get("team_scores", [0,0])[0] > merged_data.get("team_scores", [0,0])[1] else 1,
+                    "date_finished_at": merged_data.get("date_finished_at"),
+                    "player_stats": merged_data["player_stats"]
+                }
+                insert_match_and_players(conn, match_payload)
 
-            count += 1
-            print(f" Uploaded match {count}")
+                count += 1
+                print(f"✅ Uploaded match {count} for player {index}")
 
-        browser.close()
+            browser.close()
 
-    print(f"{count} matches uploaded successfully.")
+        print(f"{count} matches uploaded successfully for player {index}")
+    conn.close()
 
 
 if __name__ == "__main__":

@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS players (
     leetify_user_id VARCHAR(64)
 );
 
+CREATE TABLE IF NOT EXISTS faceit_steam_ids (
+    steam64_id VARCHAR(32) PRIMARY KEY,
+    region VARCHAR(10)
+);
+
 CREATE TABLE IF NOT EXISTS match_player_stats (
     match_id VARCHAR(64) REFERENCES matches(match_id) ON DELETE CASCADE,
     steam64_id VARCHAR(32) REFERENCES players(steam64_id) ON DELETE CASCADE,
