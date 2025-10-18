@@ -16,7 +16,9 @@ from database.get_db_matches import get_all_matches_ids
 from database.leetify_db_uploader import insert_match_and_players
 from database.get_db_faceit_steam_ids import get_steam_ids
 
-# URL = "https://leetify.com/app/match-details/7168d44e-ed88-45ad-9403-28187440b98e/overview" # requestURL = "https://api.cs-prod.leetify.com/api/games/7168d44e-ed88-45ad-9403-28187440b98e" # profileURL = "https://api.cs-prod.leetify.com/api/profile/id/76561198089612542" # URL = "https://leetify.com/app/match-details/ed7d411b-876d-4481-b45d-a44f826426e5/overview" # requestURL = "https://api.cs-prod.leetify.com/api/games/ed7d411b-876d-4481-b45d-a44f826426e5"
+# URL = "https://leetify.com/app/match-details/7168d44e-ed88-45ad-9403-28187440b98e/overview" 
+# requestURL = "https://api.cs-prod.leetify.com/api/games/7168d44e-ed88-45ad-9403-28187440b98e" 
+# profileURL = "https://api.cs-prod.leetify.com/api/profile/id/76561198089612542" # URL = "https://leetify.com/app/match-details/ed7d411b-876d-4481-b45d-a44f826426e5/overview" # requestURL = "https://api.cs-prod.leetify.com/api/games/ed7d411b-876d-4481-b45d-a44f826426e5"
 
 
 ua = UserAgent()
@@ -31,14 +33,13 @@ def get_random_headers():
 
 
 def scrape_match_with_retry(page, match_id, retries=3, delay=5):
-    """Scrape a single match with retry and random User-Agent rotation."""
     for attempt in range(1, retries + 1):
         headers = get_random_headers()
         URL = f"https://leetify.com/app/match-details/{match_id}/overview"
         requestURL = f"https://api.cs-prod.leetify.com/api/games/{match_id}"
 
         try:
-            print(f"\n[Attempt {attempt}] Fetching match {match_id} with UA: {headers['User-Agent']}")
+            print(f"\n[Attempt {attempt}] Fetching match {match_id}")
             page.set_extra_http_headers(headers)
             page.goto(URL, timeout=60000)
             page.wait_for_load_state("networkidle", timeout=60000)
@@ -85,18 +86,29 @@ def main(headless=True):
     conn = get_connection()
     cursor = conn.cursor()
 
+    database_match_ids = set(get_all_matches_ids())
+
     for index, steam_id in enumerate(faceit_steam_ids):
-        database_match_ids = get_all_matches_ids()
         count = 0
         headers = get_random_headers()
 
         profileURL = f"https://api.cs-prod.leetify.com/api/profile/id/{steam_id}"
-        response = requests.get(profileURL, headers=headers, timeout=15)
+        try:
+            response = requests.get(profileURL, headers=headers, timeout=15)
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching profile for {steam_id}: {e}")
+            continue
+
         if response.status_code != 200:
-            print("Failed to fetch profile API for:", response.status_code, steam_id)
+            print(f"Failed to fetch profile API ({response.status_code}) for {steam_id}")
             continue
 
         profile_data = response.json()
+
+        if not profile_data.get("isSensitiveDataVisible", True):
+            print(f"SKIPPING PLAYER: {steam_id} (anonymous profile)")
+            continue
+
         faceit_matches = [
             g for g in profile_data.get("games", [])
             if g.get("dataSource") == "faceit"
@@ -110,15 +122,16 @@ def main(headless=True):
 
             for match in faceit_matches:
                 match_id = match["gameId"]
+
                 if match_id in database_match_ids:
                     print(f"Skipping already-uploaded match {match_id}")
                     continue
 
+                print(f"Scraping match {match_id} for player {steam_id} (#{index})")
                 merged_data = scrape_match_with_retry(page, match_id)
                 if not merged_data:
                     print(f"Skipping match {match_id} after all retries.")
                     continue
-
                 match_payload = {
                     "match_id": merged_data["match_id"],
                     "dataSource": merged_data.get("dataSource"),
@@ -128,7 +141,11 @@ def main(headless=True):
                     "date_finished_at": merged_data.get("date_finished_at"),
                     "player_stats": merged_data["player_stats"]
                 }
+
                 insert_match_and_players(conn, match_payload)
+                conn.commit()
+
+                database_match_ids.add(match_id)
 
                 count += 1
                 print(f"✅ Uploaded match {count} for player {index}")
@@ -136,6 +153,7 @@ def main(headless=True):
             browser.close()
 
         print(f"{count} matches uploaded successfully for player {index}")
+
     conn.close()
 
 
