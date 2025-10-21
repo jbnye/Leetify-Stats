@@ -14,7 +14,7 @@ def leetify_match_data_parser(data):
             "accuracy": player.get("accuracy"),
             "accuracyEnemySpotted": player.get("accuracyEnemySpotted"),
             "accuracyHead": player.get("accuracyHead"),
-            "counterStrafingShtsGoodRatio": player.get("counterStrafingShtsGoodRatio"),
+            "counterStrafingShotsGoodRatio": player.get("counterStrafingShotsGoodRatio"),
             "flashbangHitFoe": player.get("flashbangHitFoe"),
             "flashbangLeadingToKill": player.get("flashbangLeadingToKill"),
             "flashbangThrown": player.get("flashbangThrown"),

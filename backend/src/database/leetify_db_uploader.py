@@ -40,7 +40,7 @@ def insert_match_and_players(conn, match_data):
                 p.get("accuracy"),
                 p.get("accuracyEnemySpotted"),
                 p.get("accuracyHead"),
-                p.get("counterStrafingShtsGoodRatio"),
+                p.get("counterStrafingShotsGoodRatio"),
                 p.get("flashbangHitFoe"),
                 p.get("flashbangLeadingToKill"),
                 p.get("flashbangThrown"),
